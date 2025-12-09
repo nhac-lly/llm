@@ -54,7 +54,6 @@ TEXT_MODEL_ID = "OpenVINO/Phi-3.5-mini-instruct-int4-cw-ov"
 TEXT_MODEL_PATH = "models/Phi-3.5-mini-instruct-int4-cw-ov"
 
 EMBEDDING_MODEL_ID = "OpenVINO/Qwen3-Embedding-0.6B-int8-ov"
-EMBEDDING_MODEL_PATH = "models/Qwen3-Embedding-0.6B-int8-ov"
 
 
 class ONNXBackend:
@@ -62,8 +61,8 @@ class ONNXBackend:
     
     def __init__(self):
         self.text_pipeline: Optional[ov_genai.LLMPipeline] = None
-        self.embedding_model: Optional[OVModelForFeatureExtraction] = None
-        self.embedding_tokenizer: Optional[AutoTokenizer] = None
+        self.embedding_model = None  # OVModelForFeatureExtraction (optional)
+        self.embedding_tokenizer = None  # AutoTokenizer (optional)
         self.text_model_path: Optional[str] = None
         self.embedding_model_path: Optional[str] = None
         self.device: Optional[str] = None
@@ -135,7 +134,7 @@ class ONNXBackend:
             print(f"✗ Error loading text model: {e}")
             raise
     
-    def load_embedding_model(self, model_path: str = None, device: str = None) -> None:
+    def load_embedding_model(self, device: str = None) -> None:
         """Load OpenVINO embedding model (auto-downloads if needed)."""
         if not OPTIMUM_AVAILABLE:
             raise ImportError("optimum-intel is required. Install with: pip install optimum-intel transformers torch")
@@ -154,6 +153,8 @@ class ONNXBackend:
             print("✓ Embedding model loaded successfully!")
         except Exception as e:
             print(f"✗ Error loading embedding model: {e}")
+            import traceback
+            traceback.print_exc()
             raise
     
     def is_text_loaded(self) -> bool:
@@ -390,7 +391,12 @@ class Embed(Resource):
     def post(self):
         """Generate embedding from text"""
         if not llm_backend.is_embedding_loaded():
-            return {'code': 1, 'message': 'Embedding model not loaded'}, 400
+            error_msg = 'Embedding model not loaded'
+            if not OPTIMUM_AVAILABLE:
+                error_msg += '. Install dependencies: pip install optimum-intel transformers torch'
+            else:
+                error_msg += '. Check server startup logs for loading errors'
+            return {'code': 1, 'message': error_msg}, 400
         
         data = request.get_json()
         text = data.get('text')
@@ -414,7 +420,6 @@ class Embed(Resource):
 def main():
     parser = argparse.ArgumentParser(description='OpenVINO GenAI API Server')
     parser.add_argument('--text-model-path', type=str, default=TEXT_MODEL_PATH, help='Path to text model (default: auto-downloads)')
-    parser.add_argument('--embedding-model-path', type=str, default=EMBEDDING_MODEL_PATH, help='Path to embedding model (default: auto-downloads)')
     parser.add_argument('--device', type=str, default='auto', help='Device: auto, npu, gpu, cpu')
     parser.add_argument('--host', type=str, default='127.0.0.1', help='Host to bind')
     parser.add_argument('--port', type=int, default=5000, help='Port to bind')
@@ -429,11 +434,17 @@ def main():
         print("   Text generation endpoints will be unavailable")
     
     # Auto-load embedding model (downloads if needed)
-    try:
-        llm_backend.load_embedding_model(args.embedding_model_path, device=args.device)
-    except Exception as e:
-        print(f"⚠ Failed to load embedding model: {e}")
-        print("   Embedding endpoints will be unavailable")
+    if not OPTIMUM_AVAILABLE:
+        print(f"⚠ optimum-intel not available. Embedding model will not load.")
+        print("   Install with: pip install optimum-intel transformers torch")
+    else:
+        try:
+            llm_backend.load_embedding_model(device=args.device)
+        except Exception as e:
+            print(f"⚠ Failed to load embedding model: {e}")
+            import traceback
+            traceback.print_exc()
+            print("   Embedding endpoints will be unavailable")
     
     print(f"\n🚀 OpenVINO GenAI API Server")
     print(f"   Text model: {TEXT_MODEL_ID}")
